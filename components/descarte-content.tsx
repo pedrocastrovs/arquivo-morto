@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -8,23 +9,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-  DialogDescription,
-} from "@/components/ui/dialog"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,6 +21,14 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
   Search,
   Trash2,
   Clock,
@@ -46,33 +38,59 @@ import {
   Calendar,
   Package,
   ShieldCheck,
+  Loader2,
 } from "lucide-react"
-import { mockBoxes } from "@/lib/mock-data"
-import type { Box } from "@/lib/types"
+import { approveDiscard } from "@/lib/actions/descarte"
+import { computeDiscardStats } from "@/lib/descarte/stats"
+import type { Box, DocumentType } from "@/lib/types"
 
-const documentTypeRetention: Record<string, { years: number; label: string }> = {
-  financeiro: { years: 5, label: "Financeiro - 5 anos" },
-  rh: { years: 10, label: "RH - 10 anos" },
-  contratos: { years: 20, label: "Contratos - 20 anos" },
-  assistencial: { years: 20, label: "Assistencial - 20 anos" },
-  administrativo: { years: 5, label: "Administrativo - 5 anos" },
-  juridico: { years: 20, label: "Jurídico - 20 anos" },
+const documentTypeRetention: Record<
+  DocumentType,
+  { years: number; label: string }
+> = {
+  financeiro: { years: 5, label: "Financeiro" },
+  rh: { years: 10, label: "RH" },
+  contratos: { years: 20, label: "Contratos" },
+  assistencial: { years: 20, label: "Assistencial" },
+  administrativo: { years: 5, label: "Administrativo" },
+  juridico: { years: 20, label: "Jurídico" },
 }
 
-export function DescarteContent() {
-  const [boxes] = useState<Box[]>(mockBoxes)
+interface DescarteContentProps {
+  readyForDiscard: Box[]
+  discarded: Box[]
+  dueWithin30Days: number
+  canApprove: boolean
+  loadError: string | null
+}
+
+export function DescarteContent({
+  readyForDiscard,
+  discarded,
+  dueWithin30Days,
+  canApprove,
+  loadError,
+}: DescarteContentProps) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedBoxes, setSelectedBoxes] = useState<string[]>([])
   const [isApproveDialogOpen, setIsApproveDialogOpen] = useState(false)
+  const [justification, setJustification] = useState("")
+  const [confirmed, setConfirmed] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
 
-  const boxesReadyForDiscard = boxes.filter((box) => box.status === "aguardando_descarte")
-  const boxesDiscarded = boxes.filter((box) => box.status === "descartada")
+  const stats = useMemo(
+    () => computeDiscardStats(readyForDiscard, discarded, dueWithin30Days),
+    [readyForDiscard, discarded, dueWithin30Days]
+  )
 
-  const filteredBoxes = boxesReadyForDiscard.filter((box) => {
+  const filteredBoxes = readyForDiscard.filter((box) => {
+    const q = searchTerm.toLowerCase()
     return (
-      box.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      box.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      box.sector.toLowerCase().includes(searchTerm.toLowerCase())
+      box.code.toLowerCase().includes(q) ||
+      box.description.toLowerCase().includes(q) ||
+      box.sector.toLowerCase().includes(q)
     )
   })
 
@@ -90,18 +108,51 @@ export function DescarteContent() {
     }
   }
 
+  const handleApprove = () => {
+    setFormError(null)
+    if (!confirmed) {
+      setFormError("Confirme a verificação da política de temporalidade.")
+      return
+    }
+    startTransition(async () => {
+      const result = await approveDiscard({
+        boxIds: selectedBoxes,
+        justification,
+      })
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+      setIsApproveDialogOpen(false)
+      setSelectedBoxes([])
+      setJustification("")
+      setConfirmed(false)
+      router.refresh()
+    })
+  }
+
+  if (loadError) {
+    return (
+      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-destructive">
+        {loadError}
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Controle de Descarte</h1>
-          <p className="text-muted-foreground">
-            Gerencie o descarte de caixas conforme temporalidade documental
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Controle de Descarte</h1>
+        <p className="text-muted-foreground">
+          Gerencie o descarte de caixas conforme temporalidade documental
+        </p>
+        {!canApprove && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Aprovação de descarte disponível apenas para administradores.
           </p>
-        </div>
+        )}
       </div>
 
-      {/* Stats */}
       <div className="grid gap-4 sm:grid-cols-4">
         <Card className="bg-card">
           <CardContent className="p-4">
@@ -111,7 +162,9 @@ export function DescarteContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Aguardando Descarte</p>
-                <p className="text-2xl font-bold text-foreground">{boxesReadyForDiscard.length}</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {stats.readyForDiscard}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -124,7 +177,9 @@ export function DescarteContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Descartadas</p>
-                <p className="text-2xl font-bold text-foreground">{boxesDiscarded.length}</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {stats.discarded}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -137,7 +192,9 @@ export function DescarteContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Espaço Liberado</p>
-                <p className="text-2xl font-bold text-foreground">{boxesDiscarded.length}</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {stats.spaceFreed}
+                </p>
                 <p className="text-xs text-muted-foreground">posições</p>
               </div>
             </div>
@@ -151,7 +208,9 @@ export function DescarteContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Próximos 30 dias</p>
-                <p className="text-2xl font-bold text-foreground">8</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {stats.dueWithin30Days}
+                </p>
                 <p className="text-xs text-muted-foreground">caixas vencendo</p>
               </div>
             </div>
@@ -159,7 +218,6 @@ export function DescarteContent() {
         </Card>
       </div>
 
-      {/* Retention Rules */}
       <Card className="bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-foreground">
@@ -167,14 +225,17 @@ export function DescarteContent() {
             Tabela de Temporalidade
           </CardTitle>
           <CardDescription>
-            Prazos de retenção configurados por tipo documental
+            Prazos de retenção por tipo documental (referência na criação da caixa)
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {Object.entries(documentTypeRetention).map(([type, config]) => (
-              <div key={type} className="rounded-lg border border-border bg-secondary/30 p-3">
-                <p className="text-sm font-medium text-foreground capitalize">{type}</p>
+              <div
+                key={type}
+                className="rounded-lg border border-border bg-secondary/30 p-3"
+              >
+                <p className="text-sm font-medium text-foreground">{config.label}</p>
                 <p className="text-2xl font-bold text-primary">{config.years}</p>
                 <p className="text-xs text-muted-foreground">anos</p>
               </div>
@@ -183,7 +244,6 @@ export function DescarteContent() {
         </CardContent>
       </Card>
 
-      {/* Boxes Ready for Discard */}
       <Card className="bg-card">
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
@@ -195,11 +255,20 @@ export function DescarteContent() {
               </Badge>
             </CardTitle>
             <CardDescription>
-              Caixas que atingiram o prazo de retenção e aguardam aprovação para descarte
+              Caixas com prazo vencido (status aguardando descarte)
             </CardDescription>
           </div>
-          {selectedBoxes.length > 0 && (
-            <AlertDialog open={isApproveDialogOpen} onOpenChange={setIsApproveDialogOpen}>
+          {canApprove && selectedBoxes.length > 0 && (
+            <AlertDialog
+              open={isApproveDialogOpen}
+              onOpenChange={(open) => {
+                setIsApproveDialogOpen(open)
+                if (!open) {
+                  setFormError(null)
+                  setConfirmed(false)
+                }
+              }}
+            >
               <AlertDialogTrigger asChild>
                 <Button variant="destructive">
                   <Trash2 className="mr-2 h-4 w-4" />
@@ -213,31 +282,51 @@ export function DescarteContent() {
                     Confirmar Descarte
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    Você está prestes a aprovar o descarte de {selectedBoxes.length} caixa(s).
-                    Esta ação é irreversível e os documentos serão permanentemente destruídos.
-                    <br /><br />
-                    Um termo de descarte será gerado automaticamente para fins de auditoria.
+                    Você está prestes a aprovar o descarte de {selectedBoxes.length}{" "}
+                    caixa(s). Esta ação é irreversível. Um registro de movimentação será
+                    criado para auditoria.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <div className="space-y-4 py-4">
+                  {formError && (
+                    <p className="text-sm text-destructive">{formError}</p>
+                  )}
                   <div className="space-y-2">
                     <Label>Justificativa</Label>
-                    <Textarea placeholder="Informe a justificativa para o descarte..." />
+                    <Textarea
+                      placeholder="Informe a justificativa para o descarte..."
+                      value={justification}
+                      onChange={(e) => setJustification(e.target.value)}
+                    />
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Checkbox id="confirm" />
+                    <Checkbox
+                      id="confirm"
+                      checked={confirmed}
+                      onCheckedChange={(v) => setConfirmed(v === true)}
+                    />
                     <label
                       htmlFor="confirm"
                       className="text-sm text-muted-foreground"
                     >
-                      Confirmo que verifiquei todos os documentos e que o descarte está em
-                      conformidade com a política de temporalidade documental.
+                      Confirmo que verifiquei a conformidade com a política de
+                      temporalidade documental.
                     </label>
                   </div>
                 </div>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                  <AlertDialogCancel disabled={isPending}>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      handleApprove()
+                    }}
+                    disabled={isPending}
+                  >
+                    {isPending && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
                     Confirmar Descarte
                   </AlertDialogAction>
                 </AlertDialogFooter>
@@ -259,15 +348,17 @@ export function DescarteContent() {
           <Table>
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="w-12">
-                  <Checkbox
-                    checked={
-                      filteredBoxes.length > 0 &&
-                      selectedBoxes.length === filteredBoxes.length
-                    }
-                    onCheckedChange={handleSelectAll}
-                  />
-                </TableHead>
+                {canApprove && (
+                  <TableHead className="w-12">
+                    <Checkbox
+                      checked={
+                        filteredBoxes.length > 0 &&
+                        selectedBoxes.length === filteredBoxes.length
+                      }
+                      onCheckedChange={handleSelectAll}
+                    />
+                  </TableHead>
+                )}
                 <TableHead className="text-muted-foreground">Código</TableHead>
                 <TableHead className="text-muted-foreground">Descrição</TableHead>
                 <TableHead className="text-muted-foreground">Setor</TableHead>
@@ -279,28 +370,34 @@ export function DescarteContent() {
             <TableBody>
               {filteredBoxes.map((box) => (
                 <TableRow key={box.id} className="border-border">
-                  <TableCell>
-                    <Checkbox
-                      checked={selectedBoxes.includes(box.id)}
-                      onCheckedChange={() => handleSelectBox(box.id)}
-                    />
-                  </TableCell>
+                  {canApprove && (
+                    <TableCell>
+                      <Checkbox
+                        checked={selectedBoxes.includes(box.id)}
+                        onCheckedChange={() => handleSelectBox(box.id)}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell className="font-medium text-primary">
                     <div className="flex items-center gap-2">
                       <Package className="h-4 w-4 text-muted-foreground" />
                       {box.code}
                     </div>
                   </TableCell>
-                  <TableCell className="text-foreground max-w-xs truncate">
+                  <TableCell className="max-w-xs truncate text-foreground">
                     {box.description}
                   </TableCell>
                   <TableCell className="text-foreground">{box.sector}</TableCell>
-                  <TableCell className="text-foreground capitalize">
-                    {box.documentType}
+                  <TableCell className="text-foreground">
+                    {documentTypeRetention[box.documentType]?.label ??
+                      box.documentType}
                   </TableCell>
                   <TableCell className="text-foreground">{box.archiveDate}</TableCell>
                   <TableCell>
-                    <Badge variant="outline" className="text-destructive border-destructive">
+                    <Badge
+                      variant="outline"
+                      className="border-destructive text-destructive"
+                    >
                       {box.expectedDiscardDate}
                     </Badge>
                   </TableCell>
@@ -308,7 +405,10 @@ export function DescarteContent() {
               ))}
               {filteredBoxes.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                  <TableCell
+                    colSpan={canApprove ? 7 : 6}
+                    className="py-8 text-center text-muted-foreground"
+                  >
                     Nenhuma caixa apta para descarte encontrada.
                   </TableCell>
                 </TableRow>
@@ -318,7 +418,6 @@ export function DescarteContent() {
         </CardContent>
       </Card>
 
-      {/* Discarded History */}
       <Card className="bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-foreground">
@@ -326,7 +425,7 @@ export function DescarteContent() {
             Histórico de Descartes
           </CardTitle>
           <CardDescription>
-            Registro de todas as caixas descartadas para fins de auditoria
+            Registro de caixas descartadas para fins de auditoria
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -341,17 +440,17 @@ export function DescarteContent() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {boxesDiscarded.map((box) => (
+              {discarded.map((box) => (
                 <TableRow key={box.id} className="border-border">
                   <TableCell className="font-medium text-muted-foreground">
                     {box.code}
                   </TableCell>
-                  <TableCell className="text-muted-foreground max-w-xs truncate">
+                  <TableCell className="max-w-xs truncate text-muted-foreground">
                     {box.description}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{box.sector}</TableCell>
                   <TableCell className="text-muted-foreground">
-                    {box.startDate} - {box.endDate}
+                    {box.startDate} — {box.endDate}
                   </TableCell>
                   <TableCell>
                     <Badge className="bg-muted text-muted-foreground">
@@ -360,9 +459,12 @@ export function DescarteContent() {
                   </TableCell>
                 </TableRow>
               ))}
-              {boxesDiscarded.length === 0 && (
+              {discarded.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                  <TableCell
+                    colSpan={5}
+                    className="py-8 text-center text-muted-foreground"
+                  >
                     Nenhuma caixa descartada ainda.
                   </TableCell>
                 </TableRow>

@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -45,26 +46,84 @@ import {
   AlertTriangle,
   CheckCircle,
   MoreHorizontal,
-  Eye,
   Package,
+  Loader2,
 } from "lucide-react"
-import { mockLoans } from "@/lib/mock-data"
+import {
+  confirmLoanPickup,
+  createLoan,
+  returnLoan,
+} from "@/lib/actions/emprestimos"
+import type { BoxOption } from "@/lib/db/boxes-select"
+import { computeLoanStatusCounts } from "@/lib/emprestimos/stats"
 import type { Loan } from "@/lib/types"
 
-const statusConfig: Record<Loan["status"], { label: string; className: string; icon: React.ElementType }> = {
+const statusConfig: Record<
+  Loan["status"],
+  { label: string; className: string; icon: React.ElementType }
+> = {
   pendente: { label: "Pendente", className: "bg-warning/20 text-warning", icon: Clock },
-  em_andamento: { label: "Em Andamento", className: "bg-primary/20 text-primary", icon: FileOutput },
-  devolvido: { label: "Devolvido", className: "bg-success/20 text-success", icon: CheckCircle },
-  atrasado: { label: "Atrasado", className: "bg-destructive/20 text-destructive", icon: AlertTriangle },
+  em_andamento: {
+    label: "Em Andamento",
+    className: "bg-primary/20 text-primary",
+    icon: FileOutput,
+  },
+  devolvido: {
+    label: "Devolvido",
+    className: "bg-success/20 text-success",
+    icon: CheckCircle,
+  },
+  atrasado: {
+    label: "Atrasado",
+    className: "bg-destructive/20 text-destructive",
+    icon: AlertTriangle,
+  },
 }
 
-export function EmprestimosContent() {
-  const [loans] = useState<Loan[]>(mockLoans)
+interface EmprestimosContentProps {
+  initialLoans: Loan[]
+  boxOptions: BoxOption[]
+  sectors: string[]
+  canWrite: boolean
+  loadError: string | null
+}
+
+export function EmprestimosContent({
+  initialLoans,
+  boxOptions,
+  sectors,
+  canWrite,
+  loadError,
+}: EmprestimosContentProps) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const loans = initialLoans
   const [searchTerm, setSearchTerm] = useState("")
   const [activeTab, setActiveTab] = useState("all")
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [isReturnDialogOpen, setIsReturnDialogOpen] = useState(false)
-  const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const [boxId, setBoxId] = useState("")
+  const [requester, setRequester] = useState("")
+  const [sector, setSector] = useState("")
+  const [returnDeadline, setReturnDeadline] = useState("")
+
+  const [returnLoanId, setReturnLoanId] = useState("")
+  const [deliveryResponsible, setDeliveryResponsible] = useState("")
+
+  const statusCounts = useMemo(
+    () => computeLoanStatusCounts(loans),
+    [loans]
+  )
+
+  const returnableLoans = useMemo(
+    () =>
+      loans.filter(
+        (l) => l.status === "em_andamento" || l.status === "atrasado"
+      ),
+    [loans]
+  )
 
   const filteredLoans = loans.filter((loan) => {
     const matchesSearch =
@@ -75,12 +134,81 @@ export function EmprestimosContent() {
     return matchesSearch && matchesTab
   })
 
-  const statusCounts = {
-    all: loans.length,
-    pendente: loans.filter((l) => l.status === "pendente").length,
-    em_andamento: loans.filter((l) => l.status === "em_andamento").length,
-    atrasado: loans.filter((l) => l.status === "atrasado").length,
-    devolvido: loans.filter((l) => l.status === "devolvido").length,
+  const resetAddForm = () => {
+    setBoxId("")
+    setRequester("")
+    setSector("")
+    setReturnDeadline("")
+    setFormError(null)
+  }
+
+  const resetReturnForm = () => {
+    setReturnLoanId("")
+    setDeliveryResponsible("")
+    setFormError(null)
+  }
+
+  const openReturnDialog = (loan?: Loan) => {
+    setReturnLoanId(loan?.id ?? "")
+    setDeliveryResponsible("")
+    setFormError(null)
+    setIsReturnDialogOpen(true)
+  }
+
+  const handleCreateLoan = () => {
+    setFormError(null)
+    startTransition(async () => {
+      const result = await createLoan({
+        boxId,
+        requester,
+        sector,
+        returnDeadline,
+      })
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+      setIsAddDialogOpen(false)
+      resetAddForm()
+      router.refresh()
+    })
+  }
+
+  const handleConfirmPickup = (loanId: string) => {
+    setFormError(null)
+    startTransition(async () => {
+      const result = await confirmLoanPickup(loanId)
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+      router.refresh()
+    })
+  }
+
+  const handleReturn = () => {
+    setFormError(null)
+    startTransition(async () => {
+      const result = await returnLoan({
+        loanId: returnLoanId,
+        deliveryResponsible,
+      })
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+      setIsReturnDialogOpen(false)
+      resetReturnForm()
+      router.refresh()
+    })
+  }
+
+  if (loadError) {
+    return (
+      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-destructive">
+        {loadError}
+      </div>
+    )
   }
 
   return (
@@ -92,123 +220,182 @@ export function EmprestimosContent() {
             Gerencie os empréstimos e devoluções de caixas
           </p>
         </div>
-        <div className="flex gap-2">
-          <Dialog open={isReturnDialogOpen} onOpenChange={setIsReturnDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline">
-                <RotateCcw className="mr-2 h-4 w-4" />
-                Registrar Devolução
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Registrar Devolução</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label>Empréstimo</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione o empréstimo..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {loans
-                        .filter((l) => l.status === "em_andamento" || l.status === "atrasado")
-                        .map((loan) => (
-                          <SelectItem key={loan.id} value={loan.id}>
-                            {loan.boxCode} - {loan.requester}
+        {canWrite && (
+          <div className="flex gap-2">
+            <Dialog
+              open={isReturnDialogOpen}
+              onOpenChange={(open) => {
+                setIsReturnDialogOpen(open)
+                if (!open) resetReturnForm()
+              }}
+            >
+              <DialogTrigger asChild>
+                <Button variant="outline" onClick={() => openReturnDialog()}>
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Registrar Devolução
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Registrar Devolução</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  {formError && isReturnDialogOpen && (
+                    <p className="text-sm text-destructive">{formError}</p>
+                  )}
+                  <div className="space-y-2">
+                    <Label>Empréstimo</Label>
+                    <Select value={returnLoanId} onValueChange={setReturnLoanId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione o empréstimo..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {returnableLoans.length === 0 ? (
+                          <SelectItem value="_none" disabled>
+                            Nenhum empréstimo em andamento
+                          </SelectItem>
+                        ) : (
+                          returnableLoans.map((loan) => (
+                            <SelectItem key={loan.id} value={loan.id}>
+                              {loan.boxCode} — {loan.requester}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Responsável pela Entrega</Label>
+                    <Input
+                      placeholder="Nome de quem está devolvendo"
+                      value={deliveryResponsible}
+                      onChange={(e) => setDeliveryResponsible(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsReturnDialogOpen(false)}
+                    disabled={isPending}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={handleReturn}
+                    disabled={isPending || !returnLoanId}
+                  >
+                    {isPending && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Confirmar Devolução
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
+              open={isAddDialogOpen}
+              onOpenChange={(open) => {
+                setIsAddDialogOpen(open)
+                if (!open) resetAddForm()
+              }}
+            >
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Novo Empréstimo
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Solicitar Empréstimo</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  {formError && isAddDialogOpen && (
+                    <p className="text-sm text-destructive">{formError}</p>
+                  )}
+                  <div className="space-y-2">
+                    <Label>Caixa</Label>
+                    <Select value={boxId} onValueChange={setBoxId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione a caixa..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {boxOptions.length === 0 ? (
+                          <SelectItem value="_none" disabled>
+                            Nenhuma caixa arquivada disponível
+                          </SelectItem>
+                        ) : (
+                          boxOptions.map((box) => (
+                            <SelectItem key={box.id} value={box.id}>
+                              {box.code} — {box.description}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Solicitante</Label>
+                    <Input
+                      placeholder="Nome do solicitante"
+                      value={requester}
+                      onChange={(e) => setRequester(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Setor</Label>
+                    <Select value={sector} onValueChange={setSector}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione o setor..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sectors.map((s) => (
+                          <SelectItem key={s} value={s}>
+                            {s}
                           </SelectItem>
                         ))}
-                    </SelectContent>
-                  </Select>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Prazo para Devolução</Label>
+                    <Input
+                      type="date"
+                      value={returnDeadline}
+                      onChange={(e) => setReturnDeadline(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Responsável pela Entrega</Label>
-                  <Input placeholder="Nome de quem está devolvendo" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Observações</Label>
-                  <Input placeholder="Observações sobre a devolução (opcional)" />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsReturnDialogOpen(false)}>
-                  Cancelar
-                </Button>
-                <Button onClick={() => setIsReturnDialogOpen(false)}>
-                  Confirmar Devolução
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                Novo Empréstimo
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Solicitar Empréstimo</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label>Caixa</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione a caixa..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="box-1">CX-000001 - Documentos Financeiros 2020</SelectItem>
-                      <SelectItem value="box-2">CX-000002 - Contratos de Fornecedores 2019</SelectItem>
-                      <SelectItem value="box-4">CX-000004 - Prontuários Médicos 2021</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Solicitante</Label>
-                  <Input placeholder="Nome do solicitante" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Setor</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione o setor..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="financeiro">Financeiro</SelectItem>
-                      <SelectItem value="rh">RH</SelectItem>
-                      <SelectItem value="juridico">Jurídico</SelectItem>
-                      <SelectItem value="assistencial">Assistencial</SelectItem>
-                      <SelectItem value="administrativo">Administrativo</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Prazo para Devolução</Label>
-                  <Input type="date" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Motivo (opcional)</Label>
-                  <Input placeholder="Motivo do empréstimo" />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
-                  Cancelar
-                </Button>
-                <Button onClick={() => setIsAddDialogOpen(false)}>
-                  Solicitar
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsAddDialogOpen(false)}
+                    disabled={isPending}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={handleCreateLoan}
+                    disabled={isPending || !boxId || !sector}
+                  >
+                    {isPending && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Solicitar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        )}
       </div>
 
-      {/* Stats */}
+      {formError && !isAddDialogOpen && !isReturnDialogOpen && (
+        <p className="text-sm text-destructive">{formError}</p>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-4">
         <Card className="bg-card">
           <CardContent className="p-4">
@@ -218,7 +405,9 @@ export function EmprestimosContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Pendentes</p>
-                <p className="text-2xl font-bold text-foreground">{statusCounts.pendente}</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {statusCounts.pendente}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -231,7 +420,9 @@ export function EmprestimosContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Em Andamento</p>
-                <p className="text-2xl font-bold text-foreground">{statusCounts.em_andamento}</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {statusCounts.em_andamento}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -244,7 +435,9 @@ export function EmprestimosContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Atrasados</p>
-                <p className="text-2xl font-bold text-foreground">{statusCounts.atrasado}</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {statusCounts.atrasado}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -257,14 +450,15 @@ export function EmprestimosContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Devolvidos</p>
-                <p className="text-2xl font-bold text-foreground">{statusCounts.devolvido}</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {statusCounts.devolvido}
+                </p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Tabs and Search */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <TabsList className="bg-secondary">
@@ -297,76 +491,97 @@ export function EmprestimosContent() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-transparent">
-                    <TableHead className="text-muted-foreground">Caixa</TableHead>
-                    <TableHead className="text-muted-foreground">Solicitante</TableHead>
-                    <TableHead className="text-muted-foreground">Setor</TableHead>
-                    <TableHead className="text-muted-foreground">Data Solicitação</TableHead>
-                    <TableHead className="text-muted-foreground">Prazo Devolução</TableHead>
-                    <TableHead className="text-muted-foreground">Status</TableHead>
-                    <TableHead className="w-12"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredLoans.map((loan) => {
-                    const StatusIcon = statusConfig[loan.status].icon
-                    return (
-                      <TableRow key={loan.id} className="border-border">
-                        <TableCell className="font-medium text-primary">
-                          <div className="flex items-center gap-2">
-                            <Package className="h-4 w-4 text-muted-foreground" />
-                            {loan.boxCode}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-foreground">{loan.requester}</TableCell>
-                        <TableCell className="text-foreground">{loan.sector}</TableCell>
-                        <TableCell className="text-foreground">{loan.requestDate}</TableCell>
-                        <TableCell className="text-foreground">{loan.returnDeadline}</TableCell>
-                        <TableCell>
-                          <Badge className={statusConfig[loan.status].className}>
-                            <StatusIcon className="mr-1 h-3 w-3" />
-                            {statusConfig[loan.status].label}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem>
-                                <Eye className="mr-2 h-4 w-4" />
-                                Ver Detalhes
-                              </DropdownMenuItem>
-                              {(loan.status === "em_andamento" || loan.status === "atrasado") && (
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    setSelectedLoan(loan)
-                                    setIsReturnDialogOpen(true)
-                                  }}
-                                >
-                                  <RotateCcw className="mr-2 h-4 w-4" />
-                                  Registrar Devolução
-                                </DropdownMenuItem>
-                              )}
-                              {loan.status === "pendente" && (
-                                <DropdownMenuItem>
-                                  <FileOutput className="mr-2 h-4 w-4" />
-                                  Confirmar Retirada
-                                </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
+              {filteredLoans.length === 0 ? (
+                <p className="py-8 text-center text-muted-foreground">
+                  Nenhum empréstimo encontrado.
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border hover:bg-transparent">
+                      <TableHead className="text-muted-foreground">Caixa</TableHead>
+                      <TableHead className="text-muted-foreground">
+                        Solicitante
+                      </TableHead>
+                      <TableHead className="text-muted-foreground">Setor</TableHead>
+                      <TableHead className="text-muted-foreground">
+                        Data Solicitação
+                      </TableHead>
+                      <TableHead className="text-muted-foreground">
+                        Prazo Devolução
+                      </TableHead>
+                      <TableHead className="text-muted-foreground">Status</TableHead>
+                      {canWrite && <TableHead className="w-12"></TableHead>}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredLoans.map((loan) => {
+                      const StatusIcon = statusConfig[loan.status].icon
+                      return (
+                        <TableRow key={loan.id} className="border-border">
+                          <TableCell className="font-medium text-primary">
+                            <div className="flex items-center gap-2">
+                              <Package className="h-4 w-4 text-muted-foreground" />
+                              {loan.boxCode}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-foreground">
+                            {loan.requester}
+                          </TableCell>
+                          <TableCell className="text-foreground">
+                            {loan.sector}
+                          </TableCell>
+                          <TableCell className="text-foreground">
+                            {loan.requestDate}
+                          </TableCell>
+                          <TableCell className="text-foreground">
+                            {loan.returnDeadline}
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={statusConfig[loan.status].className}>
+                              <StatusIcon className="mr-1 h-3 w-3" />
+                              {statusConfig[loan.status].label}
+                            </Badge>
+                          </TableCell>
+                          {canWrite && (
+                            <TableCell>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon">
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  {(loan.status === "em_andamento" ||
+                                    loan.status === "atrasado") && (
+                                    <DropdownMenuItem
+                                      onClick={() => openReturnDialog(loan)}
+                                    >
+                                      <RotateCcw className="mr-2 h-4 w-4" />
+                                      Registrar Devolução
+                                    </DropdownMenuItem>
+                                  )}
+                                  {loan.status === "pendente" && (
+                                    <DropdownMenuItem
+                                      onClick={() =>
+                                        handleConfirmPickup(loan.id)
+                                      }
+                                      disabled={isPending}
+                                    >
+                                      <FileOutput className="mr-2 h-4 w-4" />
+                                      Confirmar Retirada
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

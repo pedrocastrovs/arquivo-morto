@@ -2,7 +2,28 @@
 
 Sistema web de **gestão de arquivo morto** (documentação física em caixas) para o **Grupo DNA Center**. Controla o ciclo de vida das caixas — cadastro, localização hierárquica no depósito, movimentações, empréstimos, descarte e indicadores operacionais.
 
-> **Estado atual:** protótipo de interface (frontend) com dados mockados. Não há API, banco de dados nem autenticação persistente.
+---
+
+## Estado do projeto
+
+| Área | Status |
+|------|--------|
+| Interface (Next.js + shadcn) | Concluída |
+| Supabase (Postgres + Auth + RLS) | Configurado |
+| Migrations + seed | Aplicados |
+| Login e rotas protegidas | Funcionando |
+| Estrutura física (`/estrutura`) | Integrada ao Supabase |
+| Caixas (`/caixas`) | Integrada ao Supabase |
+| Movimentações (`/movimentacoes`) | Integrada ao Supabase |
+| Dashboard e demais módulos operacionais | Supabase |
+| Deploy produção (Vercel) | Pendente |
+
+**Stack atual:** Next.js 16 + **Supabase**. Módulos operacionais integrados ao banco; [`lib/mock-data.ts`](lib/mock-data.ts) permanece apenas como referência legada.
+
+Documentação complementar:
+
+- **[docs/GUIA-IMPLEMENTACAO.md](docs/GUIA-IMPLEMENTACAO.md)** — roteiro completo até produção
+- **[supabase/SETUP.md](supabase/SETUP.md)** — referência de setup do Supabase (já realizado)
 
 ---
 
@@ -12,32 +33,32 @@ Sistema web de **gestão de arquivo morto** (documentação física em caixas) p
 - [Stack tecnológica](#stack-tecnológica)
 - [Pré-requisitos](#pré-requisitos)
 - [Instalação e execução](#instalação-e-execução)
+- [Variáveis de ambiente](#variáveis-de-ambiente)
 - [Scripts disponíveis](#scripts-disponíveis)
 - [Estrutura do projeto](#estrutura-do-projeto)
 - [Módulos e rotas](#módulos-e-rotas)
-- [Modelo de domínio](#modelo-de-domínio)
-- [Camada de dados](#camada-de-dados)
+- [Banco de dados (Supabase)](#banco-de-dados-supabase)
 - [Autenticação](#autenticação)
+- [Camada de dados na UI](#camada-de-dados-na-ui)
 - [Etiquetas e impressão](#etiquetas-e-impressão)
 - [Convenções de desenvolvimento](#convenções-de-desenvolvimento)
-- [Limitações conhecidas](#limitações-conhecidas)
-- [Roadmap sugerido](#roadmap-sugerido)
+- [Limitações e próximos passos](#limitações-e-próximos-passos)
 - [Licença](#licença)
 
 ---
 
 ## Funcionalidades
 
-| Módulo | Descrição |
-|--------|-----------|
-| **Dashboard** | KPIs (caixas, movimentações, empréstimos, ocupação, descarte), gráficos por setor e por mês, listas recentes |
-| **Caixas** | Listagem, busca, filtros por status, cadastro em diálogo, detalhes, geração de etiqueta |
-| **Estrutura física** | Árvore hierárquica do depósito com indicação de posições livres/ocupadas |
-| **Movimentações** | Histórico e registro de transferências entre localizações |
-| **Empréstimos** | Solicitações, retirada, prazos, devolução e status (pendente, em andamento, devolvido, atrasado) |
-| **Descarte** | Caixas elegíveis e fluxo de aprovação para descarte |
-| **Configurações** | Gestão visual de usuários, setores e unidades (mock local) |
-| **Login** | Tela de entrada com branding; redirecionamento simulado |
+| Módulo | Descrição | Dados |
+|--------|-----------|-------|
+| **Dashboard** | KPIs, gráficos por setor/mês, listas recentes | Supabase |
+| **Caixas** | Listagem, busca, filtros, cadastro, etiqueta QR/barcode | Supabase |
+| **Estrutura física** | Árvore Local → Rua → Prédio → Andar → Torre → Posição | Supabase |
+| **Movimentações** | Histórico e registro de transferências | Supabase |
+| **Empréstimos** | Solicitação, retirada, devolução, atrasos | Supabase |
+| **Descarte** | Caixas elegíveis e aprovação de descarte | Supabase |
+| **Configurações** | Usuários, setores, unidades | Supabase (convite via Auth) |
+| **Login** | E-mail/senha via Supabase Auth | Supabase |
 
 ### Ciclo de vida da caixa
 
@@ -47,7 +68,7 @@ Preparação → Arquivada → Emprestada / Em movimentação
         Aguardando descarte → Descartada
 ```
 
-Status definidos em `lib/types.ts`: `preparacao`, `arquivada`, `emprestada`, `em_movimentacao`, `aguardando_descarte`, `descartada`.
+Status em `lib/types.ts` e no banco (`box_status`): `preparacao`, `arquivada`, `emprestada`, `em_movimentacao`, `aguardando_descarte`, `descartada`.
 
 ---
 
@@ -55,53 +76,73 @@ Status definidos em `lib/types.ts`: `preparacao`, `arquivada`, `emprestada`, `em
 
 | Tecnologia | Uso |
 |------------|-----|
-| [Next.js 16](https://nextjs.org/) | App Router, rotas e renderização |
-| [React 19](https://react.dev/) | Interface e componentes client |
-| [TypeScript](https://www.typescriptlang.org/) | Tipagem do domínio e componentes |
-| [Tailwind CSS 4](https://tailwindcss.com/) | Estilos utilitários |
-| [shadcn/ui](https://ui.shadcn.com/) + Radix UI | Componentes acessíveis (estilo *new-york*) |
-| [Recharts](https://recharts.org/) | Gráficos do dashboard |
-| [Lucide React](https://lucide.dev/) | Ícones |
-| [react-hook-form](https://react-hook-form.com/) + [Zod](https://zod.dev/) | Formulários (dependências instaladas) |
-| [qrcode.react](https://www.npmjs.com/package/qrcode.react) + [react-barcode](https://www.npmjs.com/package/react-barcode) | Etiquetas com QR Code e código de barras |
+| [Next.js 16](https://nextjs.org/) | App Router, middleware, Server Components |
+| [React 19](https://react.dev/) | Interface |
+| [TypeScript](https://www.typescriptlang.org/) | Tipagem |
+| [Supabase](https://supabase.com/) | PostgreSQL, Auth, RLS |
+| [@supabase/ssr](https://supabase.com/docs/guides/auth/server-side/nextjs) | Sessão em cookies (Next.js) |
+| [Tailwind CSS 4](https://tailwindcss.com/) | Estilos |
+| [shadcn/ui](https://ui.shadcn.com/) + Radix UI | Componentes |
+| [Recharts](https://recharts.org/) | Gráficos |
+| [qrcode.react](https://www.npmjs.com/package/qrcode.react) + [react-barcode](https://www.npmjs.com/package/react-barcode) | Etiquetas |
 | [@vercel/analytics](https://vercel.com/docs/analytics) | Analytics em produção |
 
 ---
 
 ## Pré-requisitos
 
-- **Node.js** 18.18 ou superior (recomendado: 20 LTS)
-- **npm**, **pnpm** ou **yarn** para instalar dependências
+- **Node.js** 20 LTS (mínimo 18.18)
+- **npm**, **pnpm** ou **yarn**
+- Projeto **Supabase** criado e variáveis em `.env.local` (ver abaixo)
+- Usuário cadastrado no Supabase Auth (perfil em `public.profiles`)
 
 ---
 
 ## Instalação e execução
 
 ```bash
-# Clonar o repositório
 git clone <url-do-repositorio>
 cd arquivo-morto
-
-# Instalar dependências
 npm install
-
-# Ambiente de desenvolvimento (http://localhost:3000)
+cp .env.example .env.local   # se ainda não existir
+# Preencha .env.local com as chaves do Supabase
 npm run dev
 ```
 
-Abra [http://localhost:3000](http://localhost:3000) no navegador.
+Abra [http://localhost:3000](http://localhost:3000). Rotas internas redirecionam para **`/login`** se não houver sessão.
 
-**Login de demonstração:** acesse `/login`, informe qualquer e-mail e senha válidos no formulário e aguarde o redirecionamento automático para o dashboard (simulação de 1 segundo).
+**Entrar no sistema:** use o e-mail e a senha do usuário criado no Supabase (Authentication → Users). O primeiro administrador deve ter `role = 'administrador'` em `profiles` (ver [supabase/SETUP.md](supabase/SETUP.md)).
 
 ```bash
-# Build de produção
-npm run build
-
-# Servir build localmente
-npm run start
+npm run build   # build de produção
+npm run start   # servir build local
+npm run lint    # ESLint
 ```
 
-Não é necessário arquivo `.env` para rodar o protótipo atual.
+### Supabase CLI (opcional)
+
+```bash
+npx supabase login
+npx supabase link --project-ref <seu-project-ref>
+npx supabase db push    # aplicar novas migrations
+```
+
+---
+
+## Variáveis de ambiente
+
+Arquivo **`.env.local`** (não commitar):
+
+| Variável | Descrição |
+|----------|-----------|
+| `NEXT_PUBLIC_SUPABASE_URL` | URL do projeto (Settings → API) |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Chave publicável (`sb_publishable_...`) |
+| `SUPABASE_SECRET_KEY` | Chave secreta — **apenas servidor** (`sb_secret_...`) |
+| `NEXT_PUBLIC_APP_URL` | URL do app (`http://localhost:3000` em dev) |
+
+Template versionado: [`.env.example`](.env.example).
+
+Chaves legadas `anon` / `service_role` ainda são aceitas em `lib/env.ts` como fallback. Detalhes: [API keys](https://supabase.com/docs/guides/getting-started/api-keys).
 
 ---
 
@@ -109,10 +150,10 @@ Não é necessário arquivo `.env` para rodar o protótipo atual.
 
 | Comando | Descrição |
 |---------|-----------|
-| `npm run dev` | Servidor de desenvolvimento com hot reload |
-| `npm run build` | Gera build otimizado em `.next/` |
-| `npm run start` | Executa o build de produção |
-| `npm run lint` | Executa ESLint no projeto |
+| `npm run dev` | Desenvolvimento (porta 3000) |
+| `npm run build` | Build de produção |
+| `npm run start` | Servir build |
+| `npm run lint` | ESLint |
 
 ---
 
@@ -120,175 +161,133 @@ Não é necessário arquivo `.env` para rodar o protótipo atual.
 
 ```
 arquivo-morto/
-├── app/                      # Rotas (Next.js App Router)
-│   ├── layout.tsx            # Layout raiz, metadata, analytics
-│   ├── globals.css           # Tokens de tema e estilos globais
-│   ├── page.tsx              # Dashboard (/)
-│   ├── login/                # Tela de login (layout isolado)
-│   ├── caixas/
-│   ├── estrutura/
-│   ├── movimentacoes/
-│   ├── emprestimos/
-│   ├── descarte/
-│   └── configuracoes/
+├── app/
+│   ├── layout.tsx, page.tsx, globals.css
+│   ├── login/                 # Login (Supabase Auth)
+│   ├── auth/
+│   │   ├── callback/          # OAuth / magic link
+│   │   └── signout/           # Encerrar sessão
+│   ├── caixas/, estrutura/, movimentacoes/
+│   ├── emprestimos/, descarte/, configuracoes/
 ├── components/
-│   ├── *-content.tsx         # Lógica e UI de cada módulo
-│   ├── app-sidebar.tsx       # Navegação lateral
-│   ├── app-header.tsx        # Cabeçalho (busca, usuário, notificações)
-│   ├── box-label.tsx         # Etiqueta imprimível da caixa
-│   └── ui/                   # Componentes shadcn/ui
+│   ├── *-content.tsx          # UI de cada módulo
+│   ├── app-sidebar.tsx, app-header.tsx, user-menu.tsx
+│   ├── box-label.tsx
+│   └── ui/                    # shadcn/ui
 ├── lib/
-│   ├── types.ts              # Tipos do domínio
-│   ├── mock-data.ts          # Dados fictícios para desenvolvimento
-│   └── utils.ts              # Utilitários (ex.: cn)
-├── hooks/                    # Hooks compartilhados
-├── public/                   # Ícones e assets estáticos
-├── next.config.mjs
-├── components.json           # Configuração shadcn
+│   ├── types.ts               # Tipos do domínio
+│   ├── env.ts                 # Variáveis de ambiente
+│   ├── mock-data.ts           # Dados demo (UI, transição)
+│   ├── supabase/
+│   │   ├── client.ts          # Browser
+│   │   ├── server.ts          # Server Components / Actions
+│   │   ├── admin.ts           # Service role (servidor)
+│   │   └── middleware.ts      # Refresh de sessão
+│   └── utils.ts
+├── supabase/
+│   ├── migrations/            # Schema + RLS
+│   ├── seed.sql               # Dados iniciais
+│   ├── config.toml
+│   └── SETUP.md
+├── middleware.ts              # Proteção de rotas
+├── docs/GUIA-IMPLEMENTACAO.md
 └── package.json
 ```
 
 ### Padrão de página
 
-Cada rota autenticada repete o shell da aplicação:
-
 ```
 AppSidebar + AppHeader + <Módulo>Content
 ```
-
-O conteúdo específico fica em `components/<modulo>-content.tsx`, mantendo `app/<modulo>/page.tsx` enxuto.
 
 ---
 
 ## Módulos e rotas
 
-| Rota | Componente | Responsabilidade |
-|------|------------|------------------|
-| `/` | `DashboardContent` | Indicadores e gráficos |
-| `/caixas` | `CaixasContent` | CRUD visual de caixas |
-| `/estrutura` | `EstruturaContent` | Árvore do depósito |
-| `/movimentacoes` | `MovimentacoesContent` | Histórico e novas movimentações |
-| `/emprestimos` | `EmprestimosContent` | Controle de empréstimos |
-| `/descarte` | `DescarteContent` | Gestão de descarte |
-| `/configuracoes` | `ConfiguracoesContent` | Usuários, setores, unidades |
-| `/login` | `login/page.tsx` | Autenticação simulada |
+| Rota | Componente | Auth |
+|------|------------|------|
+| `/login` | `login/page.tsx` | Pública |
+| `/` | `DashboardContent` | Protegida |
+| `/caixas` | `CaixasContent` | Protegida |
+| `/estrutura` | `EstruturaContent` | Protegida |
+| `/movimentacoes` | `MovimentacoesContent` | Protegida |
+| `/emprestimos` | `EmprestimosContent` | Protegida |
+| `/descarte` | `DescarteContent` | Protegida |
+| `/configuracoes` | `ConfiguracoesContent` | Protegida |
 
 ---
 
-## Modelo de domínio
+## Banco de dados (Supabase)
 
-Definições centralizadas em [`lib/types.ts`](lib/types.ts).
+Migration principal: [`supabase/migrations/20260531150000_initial_schema.sql`](supabase/migrations/20260531150000_initial_schema.sql)
 
-### Estrutura física (endereçamento)
+| Tabela | Função |
+|--------|--------|
+| `locations` → `positions` | Estrutura física hierárquica |
+| `boxes` | Caixas de arquivo |
+| `movements` | Log de movimentações |
+| `loans` | Empréstimos |
+| `profiles` | Perfil e papel (`auth.users`) |
+| `sectors`, `units` | Cadastros auxiliares |
 
-Hierarquia aninhada para localizar caixas no depósito:
+**RLS** ativo com papéis: `administrador`, `operador`, `consultante`.
 
-```
-Local
- └── Rua
-      └── Prédio
-           └── Andar
-                └── Torre
-                     └── Posição (livre ou ocupada)
-```
+**Triggers:** criação de perfil no signup; sincronização de ocupação de posição; sequência `CX-000001` para códigos de caixa.
 
-### Entidades principais
-
-| Entidade | Campos relevantes |
-|----------|-------------------|
-| **Box** | `code`, `barcode`, setor, unidade, responsável, `documentType`, datas, `status`, `locationPath`, `positionId` |
-| **Movement** | caixa, data/hora, usuário, local anterior/novo, motivo |
-| **Loan** | solicitante, setor, datas de retirada/devolução, `status` |
-| **User** | nome, e-mail, `role` (administrador \| operador \| consultante), setor |
-
-### Tipos de documento
-
-`financeiro`, `rh`, `contratos`, `assistencial`, `administrativo`, `juridico`
-
----
-
-## Camada de dados
-
-Os dados vêm de [`lib/mock-data.ts`](lib/mock-data.ts):
-
-| Export | Conteúdo |
-|--------|----------|
-| `mockLocations` | Estrutura física completa |
-| `mockBoxes` | Caixas de exemplo |
-| `mockMovements` | Movimentações |
-| `mockLoans` | Empréstimos |
-| `mockDashboardStats` | KPIs do dashboard |
-| `mockSectorStats` | Distribuição por setor |
-| `mockMonthlyMovements` | Série mensal para gráficos |
-
-Os componentes importam esses arrays e inicializam estado local com `useState`. **Alterações feitas na UI não são persistidas** — ao recarregar a página, os dados voltam ao mock original.
-
-```
-mock-data.ts  →  import  →  *-content.tsx (useState)  →  UI
-```
-
-Não existem rotas em `app/api/` nem integração com banco.
+Seed: [`supabase/seed.sql`](supabase/seed.sql) (setores, unidades, estrutura “Arquivo Central”).
 
 ---
 
 ## Autenticação
 
-- A rota `/login` simula autenticação com `setTimeout` e `router.push("/")`.
-- **Não há** middleware de proteção de rotas: páginas como `/caixas` podem ser acessadas diretamente.
-- O header exibe usuário fixo (“Admin”) apenas como placeholder visual.
+- **Login:** `signInWithPassword` em `/login` ([`lib/supabase/client.ts`](lib/supabase/client.ts))
+- **Middleware:** [`middleware.ts`](middleware.ts) — exige sessão; redireciona para `/login` com `redirectTo`
+- **Sessão:** cookies via `@supabase/ssr`
+- **Perfil:** tabela `profiles` + [`components/user-menu.tsx`](components/user-menu.tsx)
+- **Sair:** `POST /auth/signout`
 
-Para evoluir o projeto, o fluxo típico seria: provedor de auth (NextAuth, Clerk, etc.), sessão/JWT, `middleware.ts` e API protegida.
+URLs no Supabase (dev): Site URL e Redirect URLs = `http://localhost:3000` / `http://localhost:3000/**`.
+
+---
+
+## Camada de dados na UI
+
+**Próximo trabalho:** Fase 11 — deploy Vercel, variáveis de produção e smoke test completo.
 
 ---
 
 ## Etiquetas e impressão
 
-O componente [`components/box-label.tsx`](components/box-label.tsx) gera etiquetas com:
-
-- Código da caixa e metadados (setor, tipo, datas)
-- **QR Code** com payload estruturado (`BOX:…|BC:…|SECTOR:…`)
-- **Código de barras** (EAN-13 a partir do valor de `box.barcode`)
-
-Na tela de caixas, o diálogo de etiqueta permite visualizar e imprimir via CSS `@media print`.
+[`components/box-label.tsx`](components/box-label.tsx): QR Code, código de barras e layout para `@media print`.
 
 ---
 
 ## Convenções de desenvolvimento
 
-- **Alias de import:** `@/` aponta para a raiz do projeto (`tsconfig.json`).
-- **Componentes client:** módulos interativos usam `"use client"` nos arquivos `*-content.tsx`.
-- **UI:** novos componentes shadcn podem ser adicionados com a CLI, seguindo [`components.json`](components.json).
-- **Idioma da interface:** português (Brasil), `lang="pt-BR"` no layout raiz.
+- Imports com alias `@/`
+- Módulos interativos: `"use client"` em `*-content.tsx`
+- Idioma da UI: português (Brasil)
+- Novos componentes shadcn: [`components.json`](components.json)
 
-### Adicionar um novo módulo
+### Novo módulo
 
-1. Criar `app/<rota>/page.tsx` com o shell (sidebar + header).
-2. Criar `components/<rota>-content.tsx` com a lógica.
-3. Registrar o item em `components/app-sidebar.tsx` (`navigation`).
-4. Estender `lib/types.ts` e `lib/mock-data.ts` se houver novas entidades.
-
----
-
-## Limitações conhecidas
-
-- Dados apenas em memória (mock); sem persistência.
-- Login e permissões não implementados de fato.
-- Busca global no header é decorativa (não filtra dados).
-- `next.config.mjs` define `typescript.ignoreBuildErrors: true` — erros de tipo podem passar no build.
-- Imagens configuradas como `unoptimized: true`.
-- Nome do pacote em `package.json` ainda é `my-project` (placeholder).
+1. `app/<rota>/page.tsx` (shell)
+2. `components/<rota>-content.tsx`
+3. Entrada em `app-sidebar.tsx`
+4. Tipos em `types.ts`; queries em `lib/db/` quando integrar ao Supabase
 
 ---
 
-## Roadmap sugerido
+## Limitações e próximos passos
 
-1. **Backend** — API REST ou tRPC + PostgreSQL (ou similar) modelando `types.ts`.
-2. **Autenticação** — login real, papéis (`UserRole`) e proteção de rotas.
-3. **Persistência** — substituir `mock-data` por fetch/server actions.
-4. **Auditoria** — log imutável de movimentações e descartes.
-5. **Integrações** — leitura de QR/código de barras via câmera ou leitor USB.
-6. **Relatórios** — exportação PDF/Excel de inventário e descartes.
-7. **Testes** — E2E (Playwright) nos fluxos críticos de caixa e empréstimo.
+| Item | Situação |
+|------|----------|
+| Persistência nas telas | Mock; banco pronto |
+| Busca no header | Decorativa |
+| `typescript.ignoreBuildErrors: true` | Ajustar antes do deploy |
+| Deploy Vercel + env de produção | Pendente (Fase 11 do guia) |
+
+**Roadmap imediato:** integrar módulos ao Postgres → dashboard real → deploy. Detalhes em [docs/GUIA-IMPLEMENTACAO.md](docs/GUIA-IMPLEMENTACAO.md).
 
 ---
 
@@ -300,4 +299,4 @@ Projeto privado — **Grupo DNA Center**. Uso e distribuição sujeitos à polí
 
 ## Suporte
 
-Para dúvidas operacionais ou acesso ao sistema em ambiente corporativo, contate a equipe de TI ou suporte interno do Grupo DNA Center.
+Dúvidas operacionais ou acesso corporativo: equipe de TI / suporte interno do Grupo DNA Center.

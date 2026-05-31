@@ -1,28 +1,51 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Archive, Eye, EyeOff, Lock, Mail, Building2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
+import { createClient } from "@/lib/supabase/client"
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [error, setError] = useState<string | null>(
+    searchParams.get("error") === "auth_callback"
+      ? "Falha ao confirmar sessão. Tente novamente."
+      : null
+  )
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
-    
-    // Simulate login
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    
-    router.push("/")
+    setError(null)
+
+    const supabase = createClient()
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+
+    if (signInError) {
+      setError(
+        signInError.message === "Invalid login credentials"
+          ? "E-mail ou senha incorretos."
+          : signInError.message
+      )
+      setIsLoading(false)
+      return
+    }
+
+    const redirectTo = searchParams.get("redirectTo") ?? "/"
+    router.push(redirectTo)
+    router.refresh()
     setIsLoading(false)
   }
 
@@ -120,6 +143,15 @@ export default function LoginPage() {
               Entre com suas credenciais para acessar o sistema
             </p>
           </div>
+
+          {error && (
+            <div
+              role="alert"
+              className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            >
+              {error}
+            </div>
+          )}
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-6">

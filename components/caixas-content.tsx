@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -51,9 +52,11 @@ import {
   Printer,
   Tag,
   Check,
+  Loader2,
 } from "lucide-react"
-import { mockBoxes } from "@/lib/mock-data"
+import { createBox } from "@/lib/actions/caixas"
 import { BoxLabel } from "@/components/box-label"
+import type { PositionOption } from "@/lib/estrutura/position-options"
 import type { Box, BoxStatus, DocumentType } from "@/lib/types"
 
 const statusConfig: Record<BoxStatus, { label: string; className: string }> = {
@@ -74,8 +77,40 @@ const documentTypeLabels: Record<DocumentType, string> = {
   juridico: "Jurídico",
 }
 
-export function CaixasContent() {
-  const [boxes] = useState<Box[]>(mockBoxes)
+interface CaixasContentProps {
+  initialBoxes: Box[]
+  positionOptions: PositionOption[]
+  sectors: string[]
+  units: string[]
+  canWrite: boolean
+  loadError: string | null
+}
+
+const emptyForm = {
+  code: "",
+  barcode: "",
+  description: "",
+  sector: "",
+  unit: "",
+  documentType: "" as DocumentType | "",
+  responsible: "",
+  startDate: "",
+  endDate: "",
+  observations: "",
+  positionId: "",
+}
+
+export function CaixasContent({
+  initialBoxes,
+  positionOptions,
+  sectors,
+  units,
+  canWrite,
+  loadError,
+}: CaixasContentProps) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const boxes = initialBoxes
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
@@ -83,21 +118,17 @@ export function CaixasContent() {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false)
   const [isLabelDialogOpen, setIsLabelDialogOpen] = useState(false)
   const [labelBox, setLabelBox] = useState<Box | null>(null)
-  const [newBoxData, setNewBoxData] = useState({
-    code: "",
-    barcode: "",
-    description: "",
-    sector: "",
-    unit: "",
-    documentType: "" as DocumentType | "",
-    responsible: "",
-    startDate: "",
-    endDate: "",
-    observations: "",
-    locationPath: "",
-  })
+  const [newBoxData, setNewBoxData] = useState(emptyForm)
+  const [formError, setFormError] = useState<string | null>(null)
   const [showSuccessDialog, setShowSuccessDialog] = useState(false)
   const [createdBox, setCreatedBox] = useState<Box | null>(null)
+
+  const selectedPositionPath = useMemo(
+    () =>
+      positionOptions.find((p) => p.positionId === newBoxData.positionId)?.path ??
+      "",
+    [positionOptions, newBoxData.positionId]
+  )
 
   const filteredBoxes = boxes.filter((box) => {
     const matchesSearch =
@@ -113,63 +144,52 @@ export function CaixasContent() {
     return acc
   }, {} as Record<string, number>)
 
-  const generateBoxCode = () => {
-    const nextNumber = boxes.length + 1
-    return `CX-${String(nextNumber).padStart(6, "0")}`
-  }
-
-  const generateBarcode = () => {
-    const timestamp = Date.now().toString().slice(-10)
-    return `7890${timestamp}`
-  }
-
   const handleCreateBox = () => {
-    const code = newBoxData.code || generateBoxCode()
-    const barcode = newBoxData.barcode || generateBarcode()
-    
-    const newBox: Box = {
-      id: `box-${Date.now()}`,
-      code,
-      barcode,
-      description: newBoxData.description,
-      sector: newBoxData.sector,
-      unit: newBoxData.unit,
-      documentType: newBoxData.documentType as DocumentType,
-      responsible: newBoxData.responsible,
-      startDate: newBoxData.startDate,
-      endDate: newBoxData.endDate,
-      archiveDate: new Date().toISOString().split("T")[0],
-      expectedDiscardDate: new Date(
-        Date.now() + 5 * 365 * 24 * 60 * 60 * 1000
-      ).toISOString().split("T")[0],
-      status: "preparacao",
-      locationPath: newBoxData.locationPath || "A definir",
-      locationId: "loc-new",
-      observations: newBoxData.observations,
+    if (!newBoxData.documentType) {
+      setFormError("Selecione o tipo documental.")
+      return
     }
+    setFormError(null)
+    startTransition(async () => {
+      const result = await createBox({
+        code: newBoxData.code || undefined,
+        barcode: newBoxData.barcode || undefined,
+        description: newBoxData.description,
+        sector: newBoxData.sector,
+        unit: newBoxData.unit,
+        documentType: newBoxData.documentType,
+        responsible: newBoxData.responsible,
+        startDate: newBoxData.startDate,
+        endDate: newBoxData.endDate,
+        observations: newBoxData.observations || undefined,
+        positionId: newBoxData.positionId || undefined,
+        locationPath: selectedPositionPath || undefined,
+      })
 
-    setCreatedBox(newBox)
-    setIsAddDialogOpen(false)
-    setShowSuccessDialog(true)
-    
-    // Reset form
-    setNewBoxData({
-      code: "",
-      barcode: "",
-      description: "",
-      sector: "",
-      unit: "",
-      documentType: "",
-      responsible: "",
-      startDate: "",
-      endDate: "",
-      observations: "",
-      locationPath: "",
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+
+      setCreatedBox(result.box)
+      setIsAddDialogOpen(false)
+      setShowSuccessDialog(true)
+      setNewBoxData(emptyForm)
+      router.refresh()
     })
   }
 
   const handlePrintLabel = () => {
     window.print()
+  }
+
+  if (loadError) {
+    return (
+      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-6 text-destructive">
+        <p className="font-medium">Não foi possível carregar as caixas</p>
+        <p className="mt-1 text-sm">{loadError}</p>
+      </div>
+    )
   }
 
   return (
@@ -179,11 +199,22 @@ export function CaixasContent() {
           <h1 className="text-2xl font-bold text-foreground">Gestão de Caixas</h1>
           <p className="text-muted-foreground">
             Cadastre, consulte e gerencie as caixas do arquivo
+            {!canWrite && " · somente leitura"}
           </p>
         </div>
-        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+        {canWrite && (
+        <Dialog
+          open={isAddDialogOpen}
+          onOpenChange={(open) => {
+            setIsAddDialogOpen(open)
+            if (!open) {
+              setFormError(null)
+              setNewBoxData(emptyForm)
+            }
+          }}
+        >
           <DialogTrigger asChild>
-            <Button>
+            <Button disabled={isPending}>
               <Plus className="mr-2 h-4 w-4" />
               Nova Caixa
             </Button>
@@ -229,11 +260,11 @@ export function CaixasContent() {
                       <SelectValue placeholder="Selecione..." />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Financeiro">Financeiro</SelectItem>
-                      <SelectItem value="RH">RH</SelectItem>
-                      <SelectItem value="Juridico">Juridico</SelectItem>
-                      <SelectItem value="Assistencial">Assistencial</SelectItem>
-                      <SelectItem value="Administrativo">Administrativo</SelectItem>
+                      {sectors.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {s}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -244,9 +275,11 @@ export function CaixasContent() {
                       <SelectValue placeholder="Selecione..." />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Matriz">Matriz</SelectItem>
-                      <SelectItem value="Filial SP">Filial SP</SelectItem>
-                      <SelectItem value="Filial RJ">Filial RJ</SelectItem>
+                      {units.map((u) => (
+                        <SelectItem key={u} value={u}>
+                          {u}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -278,18 +311,24 @@ export function CaixasContent() {
                 </div>
                 <div className="space-y-2">
                   <Label>Data Inicial</Label>
-                  <Input 
+                  <Input
                     type="date"
+                    required
                     value={newBoxData.startDate}
-                    onChange={(e) => setNewBoxData({ ...newBoxData, startDate: e.target.value })}
+                    onChange={(e) =>
+                      setNewBoxData({ ...newBoxData, startDate: e.target.value })
+                    }
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>Data Final</Label>
-                  <Input 
+                  <Input
                     type="date"
+                    required
                     value={newBoxData.endDate}
-                    onChange={(e) => setNewBoxData({ ...newBoxData, endDate: e.target.value })}
+                    onChange={(e) =>
+                      setNewBoxData({ ...newBoxData, endDate: e.target.value })
+                    }
                   />
                 </div>
               </div>
@@ -302,30 +341,65 @@ export function CaixasContent() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Localizacao</Label>
-                <Select value={newBoxData.locationPath} onValueChange={(value) => setNewBoxData({ ...newBoxData, locationPath: value })}>
+                <Label>Localização (posição livre)</Label>
+                <Select
+                  value={newBoxData.positionId || "_none"}
+                  onValueChange={(value) =>
+                    setNewBoxData({
+                      ...newBoxData,
+                      positionId: value === "_none" ? "" : value,
+                    })
+                  }
+                >
                   <SelectTrigger>
-                    <SelectValue placeholder="Selecione a posicao..." />
+                    <SelectValue placeholder="Opcional — arquivar depois" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Arquivo Central > Rua A > Predio 01 > Andar 01 > Torre A > Posicao 03">Arquivo Central {">"} Rua A {">"} Predio 01 {">"} Andar 01 {">"} Torre A {">"} Posicao 03</SelectItem>
-                    <SelectItem value="Arquivo Central > Rua A > Predio 01 > Andar 01 > Torre A > Posicao 05">Arquivo Central {">"} Rua A {">"} Predio 01 {">"} Andar 01 {">"} Torre A {">"} Posicao 05</SelectItem>
-                    <SelectItem value="Arquivo Central > Rua A > Predio 01 > Andar 01 > Torre B > Posicao 02">Arquivo Central {">"} Rua A {">"} Predio 01 {">"} Andar 01 {">"} Torre B {">"} Posicao 02</SelectItem>
+                    <SelectItem value="_none">Sem posição (preparação)</SelectItem>
+                    {positionOptions.map((opt) => (
+                      <SelectItem key={opt.positionId} value={opt.positionId}>
+                        {opt.path}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+                {positionOptions.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Nenhuma posição livre. Cadastre em Estrutura Física.
+                  </p>
+                )}
               </div>
+              {formError && (
+                <p className="text-sm text-destructive" role="alert">
+                  {formError}
+                </p>
+              )}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+              <Button
+                variant="outline"
+                onClick={() => setIsAddDialogOpen(false)}
+                disabled={isPending}
+              >
                 Cancelar
               </Button>
-              <Button onClick={handleCreateBox}>
-                <Tag className="mr-2 h-4 w-4" />
-                Cadastrar e Gerar Etiqueta
+              <Button onClick={handleCreateBox} disabled={isPending}>
+                {isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Salvando…
+                  </>
+                ) : (
+                  <>
+                    <Tag className="mr-2 h-4 w-4" />
+                    Cadastrar e Gerar Etiqueta
+                  </>
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {/* Status Cards */}
@@ -406,7 +480,17 @@ export function CaixasContent() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredBoxes.map((box) => (
+              {filteredBoxes.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={7}
+                    className="py-8 text-center text-muted-foreground"
+                  >
+                    Nenhuma caixa encontrada.
+                  </TableCell>
+                </TableRow>
+              ) : (
+              filteredBoxes.map((box) => (
                 <TableRow key={box.id} className="border-border">
                   <TableCell className="font-medium text-foreground">
                     <div className="flex items-center gap-2">
@@ -471,7 +555,7 @@ export function CaixasContent() {
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))}
+              )))}
             </TableBody>
           </Table>
         </CardContent>

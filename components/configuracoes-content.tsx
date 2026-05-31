@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -32,6 +33,17 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import {
   Settings,
   Users,
   FileText,
@@ -41,31 +53,20 @@ import {
   Trash2,
   Shield,
   Clock,
+  Loader2,
+  Info,
 } from "lucide-react"
+import {
+  createSector,
+  createUnit,
+  deleteSector,
+  deleteUnit,
+  updateProfileRole,
+  updateSector,
+  updateUnit,
+} from "@/lib/actions/configuracoes"
+import type { ProfileRecord, SectorRecord, UnitRecord } from "@/lib/db/config"
 import type { UserRole } from "@/lib/types"
-
-const mockUsers = [
-  { id: "1", name: "Admin Sistema", email: "admin@dnacenter.com", role: "administrador" as UserRole, sector: "TI", active: true },
-  { id: "2", name: "Maria Silva", email: "maria.silva@dnacenter.com", role: "operador" as UserRole, sector: "Arquivo", active: true },
-  { id: "3", name: "João Santos", email: "joao.santos@dnacenter.com", role: "operador" as UserRole, sector: "Arquivo", active: true },
-  { id: "4", name: "Ana Costa", email: "ana.costa@dnacenter.com", role: "consultante" as UserRole, sector: "RH", active: true },
-  { id: "5", name: "Carlos Lima", email: "carlos.lima@dnacenter.com", role: "consultante" as UserRole, sector: "Financeiro", active: false },
-]
-
-const mockSectors = [
-  { id: "1", name: "Financeiro", code: "FIN", retention: 5 },
-  { id: "2", name: "RH", code: "RH", retention: 10 },
-  { id: "3", name: "Jurídico", code: "JUR", retention: 20 },
-  { id: "4", name: "Assistencial", code: "ASS", retention: 20 },
-  { id: "5", name: "Administrativo", code: "ADM", retention: 5 },
-  { id: "6", name: "TI", code: "TI", retention: 5 },
-]
-
-const mockUnits = [
-  { id: "1", name: "Matriz", code: "MTZ", address: "Av. Principal, 1000 - Centro" },
-  { id: "2", name: "Filial SP", code: "FSP", address: "Rua Augusta, 500 - São Paulo" },
-  { id: "3", name: "Filial RJ", code: "FRJ", address: "Av. Rio Branco, 200 - Rio de Janeiro" },
-]
 
 const roleLabels: Record<UserRole, { label: string; className: string }> = {
   administrador: { label: "Administrador", className: "bg-primary/20 text-primary" },
@@ -73,26 +74,169 @@ const roleLabels: Record<UserRole, { label: string; className: string }> = {
   consultante: { label: "Consultante", className: "bg-warning/20 text-warning" },
 }
 
-export function ConfiguracoesContent() {
-  const [isUserDialogOpen, setIsUserDialogOpen] = useState(false)
-  const [isSectorDialogOpen, setIsSectorDialogOpen] = useState(false)
-  const [isUnitDialogOpen, setIsUnitDialogOpen] = useState(false)
+interface ConfiguracoesContentProps {
+  sectors: SectorRecord[]
+  units: UnitRecord[]
+  profiles: ProfileRecord[]
+  canManageCadastros: boolean
+  canManageUsers: boolean
+  loadError: string | null
+}
+
+export function ConfiguracoesContent({
+  sectors,
+  units,
+  profiles,
+  canManageCadastros,
+  canManageUsers,
+  loadError,
+}: ConfiguracoesContentProps) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const [sectorDialogOpen, setSectorDialogOpen] = useState(false)
+  const [editingSector, setEditingSector] = useState<SectorRecord | null>(null)
+  const [sectorName, setSectorName] = useState("")
+
+  const [unitDialogOpen, setUnitDialogOpen] = useState(false)
+  const [editingUnit, setEditingUnit] = useState<UnitRecord | null>(null)
+  const [unitName, setUnitName] = useState("")
+
+  const [userDialogOpen, setUserDialogOpen] = useState(false)
+  const [editingProfile, setEditingProfile] = useState<ProfileRecord | null>(null)
+  const [profileRole, setProfileRole] = useState<UserRole>("operador")
+  const [profileSector, setProfileSector] = useState("")
+
+  const openNewSector = () => {
+    setEditingSector(null)
+    setSectorName("")
+    setFormError(null)
+    setSectorDialogOpen(true)
+  }
+
+  const openEditSector = (s: SectorRecord) => {
+    setEditingSector(s)
+    setSectorName(s.name)
+    setFormError(null)
+    setSectorDialogOpen(true)
+  }
+
+  const saveSector = () => {
+    setFormError(null)
+    startTransition(async () => {
+      const result = editingSector
+        ? await updateSector(editingSector.id, sectorName)
+        : await createSector(sectorName)
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+      setSectorDialogOpen(false)
+      router.refresh()
+    })
+  }
+
+  const handleDeleteSector = (id: string) => {
+    startTransition(async () => {
+      const result = await deleteSector(id)
+      if (!result.success) setFormError(result.error)
+      else router.refresh()
+    })
+  }
+
+  const openNewUnit = () => {
+    setEditingUnit(null)
+    setUnitName("")
+    setFormError(null)
+    setUnitDialogOpen(true)
+  }
+
+  const openEditUnit = (u: UnitRecord) => {
+    setEditingUnit(u)
+    setUnitName(u.name)
+    setFormError(null)
+    setUnitDialogOpen(true)
+  }
+
+  const saveUnit = () => {
+    setFormError(null)
+    startTransition(async () => {
+      const result = editingUnit
+        ? await updateUnit(editingUnit.id, unitName)
+        : await createUnit(unitName)
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+      setUnitDialogOpen(false)
+      router.refresh()
+    })
+  }
+
+  const handleDeleteUnit = (id: string) => {
+    startTransition(async () => {
+      const result = await deleteUnit(id)
+      if (!result.success) setFormError(result.error)
+      else router.refresh()
+    })
+  }
+
+  const openEditProfile = (p: ProfileRecord) => {
+    setEditingProfile(p)
+    setProfileRole(p.role)
+    setProfileSector(p.sector ?? "")
+    setFormError(null)
+    setUserDialogOpen(true)
+  }
+
+  const saveProfile = () => {
+    if (!editingProfile) return
+    setFormError(null)
+    startTransition(async () => {
+      const result = await updateProfileRole({
+        profileId: editingProfile.id,
+        role: profileRole,
+        sector: profileSector,
+      })
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+      setUserDialogOpen(false)
+      router.refresh()
+    })
+  }
+
+  if (loadError) {
+    return (
+      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-destructive">
+        {loadError}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Configurações</h1>
         <p className="text-muted-foreground">
-          Gerencie usuários, setores e configurações do sistema
+          Gerencie usuários, setores e unidades do sistema
         </p>
       </div>
 
-      <Tabs defaultValue="users" className="space-y-6">
+      {formError && !sectorDialogOpen && !unitDialogOpen && !userDialogOpen && (
+        <p className="text-sm text-destructive">{formError}</p>
+      )}
+
+      <Tabs defaultValue={canManageUsers ? "users" : "sectors"} className="space-y-6">
         <TabsList className="bg-secondary">
-          <TabsTrigger value="users" className="flex items-center gap-2">
-            <Users className="h-4 w-4" />
-            Usuários
-          </TabsTrigger>
+          {canManageUsers && (
+            <TabsTrigger value="users" className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Usuários
+            </TabsTrigger>
+          )}
           <TabsTrigger value="sectors" className="flex items-center gap-2">
             <Building className="h-4 w-4" />
             Setores
@@ -111,127 +255,134 @@ export function ConfiguracoesContent() {
           </TabsTrigger>
         </TabsList>
 
-        {/* Users Tab */}
-        <TabsContent value="users">
-          <Card className="bg-card">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
+        {canManageUsers && (
+          <TabsContent value="users">
+            <Card className="bg-card">
+              <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-foreground">
                   <Users className="h-5 w-5" />
                   Gestão de Usuários
                 </CardTitle>
                 <CardDescription>
-                  Gerencie os usuários e suas permissões no sistema
+                  Perfis sincronizados com o Supabase Auth. Novos usuários são
+                  criados no painel Supabase (Authentication → Users).
                 </CardDescription>
-              </div>
-              <Dialog open={isUserDialogOpen} onOpenChange={setIsUserDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Novo Usuário
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Adicionar Usuário</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label>Nome</Label>
-                      <Input placeholder="Nome completo" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>E-mail</Label>
-                      <Input type="email" placeholder="email@exemplo.com" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Perfil</Label>
-                        <Select>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="administrador">Administrador</SelectItem>
-                            <SelectItem value="operador">Operador</SelectItem>
-                            <SelectItem value="consultante">Consultante</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Setor</Label>
-                        <Select>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {mockSectors.map((sector) => (
-                              <SelectItem key={sector.id} value={sector.id}>
-                                {sector.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsUserDialogOpen(false)}>
-                      Cancelar
-                    </Button>
-                    <Button onClick={() => setIsUserDialogOpen(false)}>Salvar</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-transparent">
-                    <TableHead className="text-muted-foreground">Nome</TableHead>
-                    <TableHead className="text-muted-foreground">E-mail</TableHead>
-                    <TableHead className="text-muted-foreground">Perfil</TableHead>
-                    <TableHead className="text-muted-foreground">Setor</TableHead>
-                    <TableHead className="text-muted-foreground">Status</TableHead>
-                    <TableHead className="w-24"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mockUsers.map((user) => (
-                    <TableRow key={user.id} className="border-border">
-                      <TableCell className="font-medium text-foreground">{user.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{user.email}</TableCell>
-                      <TableCell>
-                        <Badge className={roleLabels[user.role].className}>
-                          <Shield className="mr-1 h-3 w-3" />
-                          {roleLabels[user.role].label}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-foreground">{user.sector}</TableCell>
-                      <TableCell>
-                        <Badge variant={user.active ? "default" : "outline"} className={user.active ? "bg-success/20 text-success" : ""}>
-                          {user.active ? "Ativo" : "Inativo"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon">
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-start gap-2 rounded-lg border border-border bg-secondary/30 p-3 text-sm text-muted-foreground">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                  Após criar o usuário no Supabase, o perfil aparece aqui na primeira
+                  login. Promova administradores com o SQL em{" "}
+                  <code className="text-xs">supabase/SETUP.md</code>.
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border hover:bg-transparent">
+                      <TableHead className="text-muted-foreground">Nome</TableHead>
+                      <TableHead className="text-muted-foreground">E-mail</TableHead>
+                      <TableHead className="text-muted-foreground">Perfil</TableHead>
+                      <TableHead className="text-muted-foreground">Setor</TableHead>
+                      <TableHead className="w-16"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {profiles.map((user) => (
+                      <TableRow key={user.id} className="border-border">
+                        <TableCell className="font-medium text-foreground">
+                          {user.name}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {user.email}
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={roleLabels[user.role].className}>
+                            <Shield className="mr-1 h-3 w-3" />
+                            {roleLabels[user.role].label}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-foreground">
+                          {user.sector ?? "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openEditProfile(user)}
+                          >
                             <Edit className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="text-destructive">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {profiles.length === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={5}
+                          className="py-8 text-center text-muted-foreground"
+                        >
+                          Nenhum perfil encontrado.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
 
-        {/* Sectors Tab */}
+            <Dialog open={userDialogOpen} onOpenChange={setUserDialogOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Editar usuário</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  {formError && (
+                    <p className="text-sm text-destructive">{formError}</p>
+                  )}
+                  <div className="space-y-2">
+                    <Label>Perfil</Label>
+                    <Select
+                      value={profileRole}
+                      onValueChange={(v) => setProfileRole(v as UserRole)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="administrador">Administrador</SelectItem>
+                        <SelectItem value="operador">Operador</SelectItem>
+                        <SelectItem value="consultante">Consultante</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Setor (opcional)</Label>
+                    <Input
+                      value={profileSector}
+                      onChange={(e) => setProfileSector(e.target.value)}
+                      placeholder="Ex: Arquivo"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setUserDialogOpen(false)}
+                    disabled={isPending}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button onClick={saveProfile} disabled={isPending}>
+                    {isPending && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Salvar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </TabsContent>
+        )}
+
         <TabsContent value="sectors">
           <Card className="bg-card">
             <CardHeader className="flex flex-row items-center justify-between">
@@ -241,84 +392,116 @@ export function ConfiguracoesContent() {
                   Gestão de Setores
                 </CardTitle>
                 <CardDescription>
-                  Configure os setores e prazos de retenção
+                  Setores usados no cadastro de caixas e empréstimos
                 </CardDescription>
               </div>
-              <Dialog open={isSectorDialogOpen} onOpenChange={setIsSectorDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Novo Setor
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Adicionar Setor</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label>Nome</Label>
-                      <Input placeholder="Nome do setor" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Código</Label>
-                        <Input placeholder="Ex: FIN" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Retenção (anos)</Label>
-                        <Input type="number" placeholder="5" />
-                      </div>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsSectorDialogOpen(false)}>
-                      Cancelar
-                    </Button>
-                    <Button onClick={() => setIsSectorDialogOpen(false)}>Salvar</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+              {canManageCadastros && (
+                <Button onClick={openNewSector}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Novo Setor
+                </Button>
+              )}
             </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
                   <TableRow className="border-border hover:bg-transparent">
                     <TableHead className="text-muted-foreground">Nome</TableHead>
-                    <TableHead className="text-muted-foreground">Código</TableHead>
-                    <TableHead className="text-muted-foreground">Retenção</TableHead>
-                    <TableHead className="w-24"></TableHead>
+                    {canManageCadastros && (
+                      <TableHead className="w-24"></TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {mockSectors.map((sector) => (
+                  {sectors.map((sector) => (
                     <TableRow key={sector.id} className="border-border">
-                      <TableCell className="font-medium text-foreground">{sector.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{sector.code}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-primary border-primary">
-                          {sector.retention} anos
-                        </Badge>
+                      <TableCell className="font-medium text-foreground">
+                        {sector.name}
                       </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon">
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="text-destructive">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
+                      {canManageCadastros && (
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditSector(sector)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Excluir setor?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    O setor &quot;{sector.name}&quot; será removido.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => handleDeleteSector(sector.id)}
+                                  >
+                                    Excluir
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </CardContent>
           </Card>
+
+          <Dialog open={sectorDialogOpen} onOpenChange={setSectorDialogOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {editingSector ? "Editar Setor" : "Adicionar Setor"}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                {formError && (
+                  <p className="text-sm text-destructive">{formError}</p>
+                )}
+                <div className="space-y-2">
+                  <Label>Nome</Label>
+                  <Input
+                    value={sectorName}
+                    onChange={(e) => setSectorName(e.target.value)}
+                    placeholder="Nome do setor"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setSectorDialogOpen(false)}
+                  disabled={isPending}
+                >
+                  Cancelar
+                </Button>
+                <Button onClick={saveSector} disabled={isPending}>
+                  {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Salvar
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
-        {/* Units Tab */}
         <TabsContent value="units">
           <Card className="bg-card">
             <CardHeader className="flex flex-row items-center justify-between">
@@ -328,78 +511,116 @@ export function ConfiguracoesContent() {
                   Gestão de Unidades
                 </CardTitle>
                 <CardDescription>
-                  Configure as unidades da organização
+                  Unidades organizacionais (Matriz, filiais)
                 </CardDescription>
               </div>
-              <Dialog open={isUnitDialogOpen} onOpenChange={setIsUnitDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Nova Unidade
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Adicionar Unidade</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label>Nome</Label>
-                      <Input placeholder="Nome da unidade" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Código</Label>
-                      <Input placeholder="Ex: MTZ" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Endereço</Label>
-                      <Input placeholder="Endereço completo" />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsUnitDialogOpen(false)}>
-                      Cancelar
-                    </Button>
-                    <Button onClick={() => setIsUnitDialogOpen(false)}>Salvar</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+              {canManageCadastros && (
+                <Button onClick={openNewUnit}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Nova Unidade
+                </Button>
+              )}
             </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
                   <TableRow className="border-border hover:bg-transparent">
                     <TableHead className="text-muted-foreground">Nome</TableHead>
-                    <TableHead className="text-muted-foreground">Código</TableHead>
-                    <TableHead className="text-muted-foreground">Endereço</TableHead>
-                    <TableHead className="w-24"></TableHead>
+                    {canManageCadastros && (
+                      <TableHead className="w-24"></TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {mockUnits.map((unit) => (
+                  {units.map((unit) => (
                     <TableRow key={unit.id} className="border-border">
-                      <TableCell className="font-medium text-foreground">{unit.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{unit.code}</TableCell>
-                      <TableCell className="text-muted-foreground">{unit.address}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon">
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="text-destructive">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                      <TableCell className="font-medium text-foreground">
+                        {unit.name}
                       </TableCell>
+                      {canManageCadastros && (
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditUnit(unit)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Excluir unidade?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    A unidade &quot;{unit.name}&quot; será removida.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => handleDeleteUnit(unit.id)}
+                                  >
+                                    Excluir
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </CardContent>
           </Card>
+
+          <Dialog open={unitDialogOpen} onOpenChange={setUnitDialogOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {editingUnit ? "Editar Unidade" : "Adicionar Unidade"}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                {formError && (
+                  <p className="text-sm text-destructive">{formError}</p>
+                )}
+                <div className="space-y-2">
+                  <Label>Nome</Label>
+                  <Input
+                    value={unitName}
+                    onChange={(e) => setUnitName(e.target.value)}
+                    placeholder="Nome da unidade"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setUnitDialogOpen(false)}
+                  disabled={isPending}
+                >
+                  Cancelar
+                </Button>
+                <Button onClick={saveUnit} disabled={isPending}>
+                  {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Salvar
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
-        {/* Retention Tab */}
         <TabsContent value="retention">
           <Card className="bg-card">
             <CardHeader>
@@ -408,7 +629,7 @@ export function ConfiguracoesContent() {
                 Tabela de Temporalidade
               </CardTitle>
               <CardDescription>
-                Configure os prazos de retenção por tipo documental
+                Referência fixa por tipo documental (aplicada ao cadastrar caixas)
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -416,21 +637,18 @@ export function ConfiguracoesContent() {
                 {[
                   { type: "Financeiro", retention: 5, description: "Notas fiscais, recibos, balanços" },
                   { type: "RH", retention: 10, description: "Folhas de pagamento, contratos de trabalho" },
-                  { type: "Contratos", retention: 20, description: "Contratos comerciais e de prestação de serviços" },
+                  { type: "Contratos", retention: 20, description: "Contratos comerciais" },
                   { type: "Assistencial", retention: 20, description: "Prontuários médicos, laudos" },
-                  { type: "Administrativo", retention: 5, description: "Memorandos, comunicados internos" },
-                  { type: "Jurídico", retention: 20, description: "Processos, pareceres jurídicos" },
+                  { type: "Administrativo", retention: 5, description: "Memorandos, comunicados" },
+                  { type: "Jurídico", retention: 20, description: "Processos, pareceres" },
                 ].map((item) => (
                   <Card key={item.type} className="bg-secondary/30">
                     <CardContent className="p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-medium text-foreground">{item.type}</h4>
-                        <Button variant="ghost" size="icon">
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <div className="flex items-baseline gap-1 mb-2">
-                        <span className="text-3xl font-bold text-primary">{item.retention}</span>
+                      <h4 className="mb-2 font-medium text-foreground">{item.type}</h4>
+                      <div className="mb-2 flex items-baseline gap-1">
+                        <span className="text-3xl font-bold text-primary">
+                          {item.retention}
+                        </span>
                         <span className="text-muted-foreground">anos</span>
                       </div>
                       <p className="text-xs text-muted-foreground">{item.description}</p>
@@ -442,7 +660,6 @@ export function ConfiguracoesContent() {
           </Card>
         </TabsContent>
 
-        {/* General Tab */}
         <TabsContent value="general">
           <div className="grid gap-6">
             <Card className="bg-card">
@@ -451,9 +668,7 @@ export function ConfiguracoesContent() {
                   <Settings className="h-5 w-5" />
                   Configurações Gerais
                 </CardTitle>
-                <CardDescription>
-                  Configurações básicas do sistema
-                </CardDescription>
+                <CardDescription>Preferências da interface (em breve)</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-center justify-between">
@@ -463,34 +678,25 @@ export function ConfiguracoesContent() {
                       Receber notificações sobre empréstimos e descartes
                     </p>
                   </div>
-                  <Switch />
+                  <Switch disabled />
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <Label>Alerta de Empréstimos Atrasados</Label>
                     <p className="text-sm text-muted-foreground">
-                      Notificar quando empréstimos estiverem atrasados
+                      Sincronizado ao abrir a tela de empréstimos
                     </p>
                   </div>
-                  <Switch defaultChecked />
+                  <Switch defaultChecked disabled />
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <Label>Alerta de Descarte</Label>
                     <p className="text-sm text-muted-foreground">
-                      Notificar quando caixas atingirem prazo de retenção
+                      Sincronizado ao abrir a tela de descarte
                     </p>
                   </div>
-                  <Switch defaultChecked />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Modo Escuro</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Usar tema escuro na interface
-                    </p>
-                  </div>
-                  <Switch defaultChecked />
+                  <Switch defaultChecked disabled />
                 </div>
               </CardContent>
             </Card>
@@ -509,16 +715,8 @@ export function ConfiguracoesContent() {
                     <p className="font-medium text-foreground">1.0.0</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Empresa</p>
-                    <p className="font-medium text-foreground">Kodacoda Soluções Tecnológicas</p>
-                  </div>
-                  <div>
                     <p className="text-sm text-muted-foreground">Cliente</p>
                     <p className="font-medium text-foreground">Grupo DNA Center</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Última Atualização</p>
-                    <p className="font-medium text-foreground">30/05/2026</p>
                   </div>
                 </div>
               </CardContent>

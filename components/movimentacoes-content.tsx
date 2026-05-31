@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -38,22 +39,93 @@ import {
   Clock,
   User,
   Calendar,
+  Loader2,
 } from "lucide-react"
-import { mockMovements } from "@/lib/mock-data"
+import { registerMovement } from "@/lib/actions/movimentacoes"
+import { computeMovementStats } from "@/lib/movimentacoes/stats"
+import type { BoxOption } from "@/lib/db/boxes-select"
+import type { PositionOption } from "@/lib/estrutura/position-options"
 import type { Movement } from "@/lib/types"
 
-export function MovimentacoesContent() {
-  const [movements] = useState<Movement[]>(mockMovements)
+interface MovimentacoesContentProps {
+  initialMovements: Movement[]
+  boxOptions: BoxOption[]
+  positionOptions: PositionOption[]
+  canWrite: boolean
+  loadError: string | null
+}
+
+export function MovimentacoesContent({
+  initialMovements,
+  boxOptions,
+  positionOptions,
+  canWrite,
+  loadError,
+}: MovimentacoesContentProps) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const movements = initialMovements
   const [searchTerm, setSearchTerm] = useState("")
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [boxId, setBoxId] = useState("")
+  const [positionId, setPositionId] = useState("")
+  const [reason, setReason] = useState("")
+
+  const stats = useMemo(
+    () => computeMovementStats(movements),
+    [movements]
+  )
+
+  const selectedPositionPath = useMemo(
+    () =>
+      positionOptions.find((p) => p.positionId === positionId)?.path ?? "",
+    [positionOptions, positionId]
+  )
 
   const filteredMovements = movements.filter((movement) => {
+    const q = searchTerm.toLowerCase()
     return (
-      movement.boxCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      movement.user.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      movement.reason.toLowerCase().includes(searchTerm.toLowerCase())
+      movement.boxCode.toLowerCase().includes(q) ||
+      movement.user.toLowerCase().includes(q) ||
+      movement.reason.toLowerCase().includes(q)
     )
   })
+
+  const resetForm = () => {
+    setBoxId("")
+    setPositionId("")
+    setReason("")
+    setFormError(null)
+  }
+
+  const handleRegister = () => {
+    setFormError(null)
+    startTransition(async () => {
+      const result = await registerMovement({
+        boxId,
+        newPositionId: positionId,
+        newLocationPath: selectedPositionPath,
+        reason,
+      })
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+      setIsAddDialogOpen(false)
+      resetForm()
+      router.refresh()
+    })
+  }
+
+  if (loadError) {
+    return (
+      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-6 text-destructive">
+        <p className="font-medium">Não foi possível carregar movimentações</p>
+        <p className="mt-1 text-sm">{loadError}</p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -62,64 +134,118 @@ export function MovimentacoesContent() {
           <h1 className="text-2xl font-bold text-foreground">Movimentações</h1>
           <p className="text-muted-foreground">
             Registre e acompanhe todas as movimentações de caixas
+            {!canWrite && " · somente leitura"}
           </p>
         </div>
-        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Nova Movimentação
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Registrar Movimentação</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label>Caixa</Label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione a caixa..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="box-1">CX-000001 - Documentos Financeiros 2020</SelectItem>
-                    <SelectItem value="box-2">CX-000002 - Contratos de Fornecedores 2019</SelectItem>
-                    <SelectItem value="box-3">CX-000003 - Folhas de Pagamento 2018</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Nova Localização</Label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione a nova posição..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pos-1">Arquivo Central {">"} Rua A {">"} Prédio 01 {">"} Andar 01 {">"} Torre A {">"} Posição 03</SelectItem>
-                    <SelectItem value="pos-2">Arquivo Central {">"} Rua A {">"} Prédio 01 {">"} Andar 01 {">"} Torre A {">"} Posição 05</SelectItem>
-                    <SelectItem value="pos-3">Arquivo Central {">"} Rua B {">"} Prédio 02 {">"} Andar 01 {">"} Torre A {">"} Posição 01</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Motivo</Label>
-                <Textarea placeholder="Descreva o motivo da movimentação..." />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
-                Cancelar
+        {canWrite && (
+          <Dialog
+            open={isAddDialogOpen}
+            onOpenChange={(open) => {
+              setIsAddDialogOpen(open)
+              if (!open) resetForm()
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button disabled={isPending}>
+                <Plus className="mr-2 h-4 w-4" />
+                Nova Movimentação
               </Button>
-              <Button onClick={() => setIsAddDialogOpen(false)}>
-                Registrar
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Registrar Movimentação</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>Caixa</Label>
+                  <Select value={boxId} onValueChange={setBoxId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a caixa..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {boxOptions.length === 0 ? (
+                        <SelectItem value="_none" disabled>
+                          Nenhuma caixa cadastrada
+                        </SelectItem>
+                      ) : (
+                        boxOptions.map((box) => (
+                          <SelectItem key={box.id} value={box.id}>
+                            {box.code} — {box.description}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {boxId && (
+                    <p className="text-xs text-muted-foreground">
+                      Origem:{" "}
+                      {boxOptions.find((b) => b.id === boxId)?.locationPath ||
+                        "—"}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Nova localização (posição livre)</Label>
+                  <Select value={positionId} onValueChange={setPositionId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a nova posição..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {positionOptions.length === 0 ? (
+                        <SelectItem value="_none" disabled>
+                          Nenhuma posição livre
+                        </SelectItem>
+                      ) : (
+                        positionOptions.map((opt) => (
+                          <SelectItem
+                            key={opt.positionId}
+                            value={opt.positionId}
+                          >
+                            {opt.path}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Motivo</Label>
+                  <Textarea
+                    placeholder="Descreva o motivo da movimentação..."
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                  />
+                </div>
+                {formError && (
+                  <p className="text-sm text-destructive" role="alert">
+                    {formError}
+                  </p>
+                )}
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setIsAddDialogOpen(false)}
+                  disabled={isPending}
+                >
+                  Cancelar
+                </Button>
+                <Button onClick={handleRegister} disabled={isPending}>
+                  {isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Registrando…
+                    </>
+                  ) : (
+                    "Registrar"
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
-      {/* Stats */}
       <div className="grid gap-4 sm:grid-cols-4">
         <Card className="bg-card">
           <CardContent className="p-4">
@@ -128,8 +254,12 @@ export function MovimentacoesContent() {
                 <ArrowRightLeft className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Total de Movimentações</p>
-                <p className="text-2xl font-bold text-foreground">{movements.length}</p>
+                <p className="text-sm text-muted-foreground">
+                  Total de Movimentações
+                </p>
+                <p className="text-2xl font-bold text-foreground">
+                  {stats.total}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -142,7 +272,9 @@ export function MovimentacoesContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Este Mês</p>
-                <p className="text-2xl font-bold text-foreground">12</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {stats.thisMonth}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -155,7 +287,9 @@ export function MovimentacoesContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Hoje</p>
-                <p className="text-2xl font-bold text-foreground">3</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {stats.today}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -168,14 +302,15 @@ export function MovimentacoesContent() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Usuários Ativos</p>
-                <p className="text-2xl font-bold text-foreground">4</p>
+                <p className="text-2xl font-bold text-foreground">
+                  {stats.activeUsers}
+                </p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Search */}
       <Card className="bg-card">
         <CardContent className="p-4">
           <div className="relative">
@@ -190,7 +325,6 @@ export function MovimentacoesContent() {
         </CardContent>
       </Card>
 
-      {/* Table */}
       <Card className="bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-foreground">
@@ -214,40 +348,53 @@ export function MovimentacoesContent() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredMovements.map((movement) => (
-                <TableRow key={movement.id} className="border-border">
-                  <TableCell className="text-foreground">
-                    <div className="flex flex-col">
-                      <span className="font-medium">{movement.date}</span>
-                      <span className="text-xs text-muted-foreground">{movement.time}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-medium text-primary">
-                    {movement.boxCode}
-                  </TableCell>
-                  <TableCell className="text-foreground">
-                    <div className="flex items-center gap-2">
-                      <User className="h-4 w-4 text-muted-foreground" />
-                      {movement.user}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs max-w-40 truncate">
-                    <div className="flex items-center gap-1">
-                      <MapPin className="h-3 w-3 shrink-0" />
-                      {movement.previousLocation}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs max-w-40 truncate">
-                    <div className="flex items-center gap-1">
-                      <MapPin className="h-3 w-3 shrink-0 text-primary" />
-                      {movement.newLocation}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-foreground max-w-48 truncate">
-                    {movement.reason}
+              {filteredMovements.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="py-8 text-center text-muted-foreground"
+                  >
+                    Nenhuma movimentação registrada.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                filteredMovements.map((movement) => (
+                  <TableRow key={movement.id} className="border-border">
+                    <TableCell className="text-foreground">
+                      <div className="flex flex-col">
+                        <span className="font-medium">{movement.date}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {movement.time}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-medium text-primary">
+                      {movement.boxCode}
+                    </TableCell>
+                    <TableCell className="text-foreground">
+                      <div className="flex items-center gap-2">
+                        <User className="h-4 w-4 text-muted-foreground" />
+                        {movement.user}
+                      </div>
+                    </TableCell>
+                    <TableCell className="max-w-40 truncate text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <MapPin className="h-3 w-3 shrink-0" />
+                        {movement.previousLocation}
+                      </div>
+                    </TableCell>
+                    <TableCell className="max-w-40 truncate text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <MapPin className="h-3 w-3 shrink-0 text-primary" />
+                        {movement.newLocation}
+                      </div>
+                    </TableCell>
+                    <TableCell className="max-w-48 truncate text-foreground">
+                      {movement.reason}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

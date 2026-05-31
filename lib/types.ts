@@ -58,7 +58,17 @@ export interface Position {
   towerId: string
   isOccupied: boolean
   boxId?: string
+  /** Código da caixa (ex.: CX-000001), quando ocupada */
+  boxCode?: string
 }
+
+export type StructureNodeType =
+  | "location"
+  | "street"
+  | "building"
+  | "floor"
+  | "tower"
+  | "position"
 
 export interface Box {
   id: string
